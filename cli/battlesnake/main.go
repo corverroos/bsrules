@@ -1,6 +1,6 @@
 package main
 
-import "github.com/corveroos/bsrules/cli/commands"
+import "github.com/corverroos/bsrules/cli/commands"
 
 func main() {
 	commands.Execute()

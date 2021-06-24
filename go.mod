@@ -1,4 +1,4 @@
-module github.com/corveroos/bsrules
+module github.com/corverroos/bsrules
 
 go 1.15
 

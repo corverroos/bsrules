@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/corveroos/bsrules"
+	"github.com/corverroos/bsrules"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"io/ioutil"
