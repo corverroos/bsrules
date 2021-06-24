@@ -1,4 +1,4 @@
-module github.com/BattlesnakeOfficial/rules
+module github.com/corveroos/bsrules
 
 go 1.15
 

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/BattlesnakeOfficial/rules"
+	"github.com/corveroos/bsrules"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"io/ioutil"
@@ -78,94 +78,121 @@ type PingResponse struct {
 	Version    string `json:"version"`
 }
 
-var GameId string
-var Turn int32
-var Battlesnakes map[string]Battlesnake
-var HttpClient http.Client
-var Width int32
-var Height int32
-var Names []string
-var URLs []string
-var Squads []string
-var Timeout int32
-var Sequential bool
-var GameType string
-var ViewMap bool
-var Seed int64
+type Options struct {
+	GameId string
+	Turn int32
+	Battlesnakes map[string]Battlesnake
+	HttpClient http.Client
+	Width int32
+	Height int32
+	Names []string
+	URLs []string
+	Squads []string
+	Timeout int32
+	Sequential bool
+	GameType string
+	ViewMap bool
+	Seed int64
+}
+
+type Result struct {
+	Turn int32
+	Winner string
+	Board *rules.BoardState
+}
 
 var playCmd = &cobra.Command{
 	Use:   "play",
 	Short: "Play a game of Battlesnake locally.",
 	Long:  "Play a game of Battlesnake locally.",
-	Run:   run,
 }
 
 func init() {
 	rootCmd.AddCommand(playCmd)
 
-	playCmd.Flags().Int32VarP(&Width, "width", "W", 11, "Width of Board")
-	playCmd.Flags().Int32VarP(&Height, "height", "H", 11, "Height of Board")
-	playCmd.Flags().StringArrayVarP(&Names, "name", "n", nil, "Name of Snake")
-	playCmd.Flags().StringArrayVarP(&URLs, "url", "u", nil, "URL of Snake")
-	playCmd.Flags().StringArrayVarP(&Names, "squad", "S", nil, "Squad of Snake")
-	playCmd.Flags().Int32VarP(&Timeout, "timeout", "t", 500, "Request Timeout")
-	playCmd.Flags().BoolVarP(&Sequential, "sequential", "s", false, "Use Sequential Processing")
-	playCmd.Flags().StringVarP(&GameType, "gametype", "g", "standard", "Type of Game Rules")
-	playCmd.Flags().BoolVarP(&ViewMap, "viewmap", "v", false, "View the Map Each Turn")
-	playCmd.Flags().Int64VarP(&Seed, "seed", "r", time.Now().UTC().UnixNano(), "Random Seed")
+
+	var o Options
+
+	playCmd.Flags().Int32VarP(&o.Width, "width", "W", 11, "Width of Board")
+	playCmd.Flags().Int32VarP(&o.Height, "height", "H", 11, "Height of Board")
+	playCmd.Flags().StringArrayVarP(&o.Names, "name", "n", nil, "Name of Snake")
+	playCmd.Flags().StringArrayVarP(&o.URLs, "url", "u", nil, "URL of Snake")
+	playCmd.Flags().StringArrayVarP(&o.Names, "squad", "S", nil, "Squad of Snake")
+	playCmd.Flags().Int32VarP(&o.Timeout, "timeout", "t", 500, "Request Timeout")
+	playCmd.Flags().BoolVarP(&o.Sequential, "sequential", "s", false, "Use Sequential Processing")
+	playCmd.Flags().StringVarP(&o.GameType, "gametype", "g", "standard", "Type of Game Rules")
+	playCmd.Flags().BoolVarP(&o.ViewMap, "viewmap", "v", false, "View the Map Each Turn")
+	playCmd.Flags().Int64VarP(&o.Seed, "seed", "r", time.Now().UTC().UnixNano(), "Random Seed")
+
+	playCmd.Run = makeRun(&o)
 }
 
-var run = func(cmd *cobra.Command, args []string) {
-	rand.Seed(Seed)
+var makeRun = func(o *Options) func(cmd *cobra.Command, args []string) {
+	return func(cmd *cobra.Command, args []string) {
+		Run(o)
+	}
+}
 
-	Battlesnakes = make(map[string]Battlesnake)
-	GameId = uuid.New().String()
-	Turn = 0
+func Run(o *Options) Result {
+	rand.Seed(o.Seed)
 
-	snakes := buildSnakesFromOptions()
+	o.Battlesnakes = make(map[string]Battlesnake)
+	o.GameId = uuid.New().String()
+	o.Turn = 0
+
+	snakes := buildSnakesFromOptions(o)
 
 	var ruleset rules.Ruleset
 	var royale rules.RoyaleRuleset
 	var outOfBounds []rules.Point
-	ruleset, _ = getRuleset(Seed, Turn, snakes)
-	state := initializeBoardFromArgs(ruleset, snakes)
+	ruleset, _ = getRuleset(o, snakes)
+	state := initializeBoardFromArgs(o, ruleset, snakes)
 	for _, snake := range snakes {
-		Battlesnakes[snake.ID] = snake
+		o.Battlesnakes[snake.ID] = snake
 	}
 
 	for v := false; !v; v, _ = ruleset.IsGameOver(state) {
-		Turn++
-		ruleset, royale = getRuleset(Seed, Turn, snakes)
-		state, outOfBounds = createNextBoardState(ruleset, royale, state, outOfBounds, snakes)
-		if ViewMap {
-			printMap(state, outOfBounds, Turn)
+		o.Turn++
+		ruleset, royale = getRuleset(o, snakes)
+		state, outOfBounds = createNextBoardState(o,ruleset, royale, state, outOfBounds, snakes)
+		if o.ViewMap {
+			printMap(o, state, outOfBounds)
 		} else {
-			log.Printf("[%v]: State: %v OutOfBounds: %v\n", Turn, state, outOfBounds)
+			log.Printf("[%v]: State: %v OutOfBounds: %v\n", o.Turn, state, outOfBounds)
 		}
 	}
 
-	if GameType == "solo" {
-		log.Printf("[DONE]: Game completed after %v turns.", Turn)
+	res := Result{
+		Board: state,
+		Turn: o.Turn,
+	}
+
+	if o.GameType == "solo" {
+		log.Printf("[DONE]: Game completed after %v turns.", o.Turn)
 	} else {
 		var winner string
 		isDraw := true
 		for _, snake := range state.Snakes {
 			if snake.EliminatedCause == rules.NotEliminated {
 				isDraw = false
-				winner = Battlesnakes[snake.ID].Name
-				sendEndRequest(state, Battlesnakes[snake.ID])
+				winner = o.Battlesnakes[snake.ID].Name
+				sendEndRequest(o, state, o.Battlesnakes[snake.ID])
 			}
 		}
 
+		res.Winner = winner
+
 		if isDraw {
-			log.Printf("[DONE]: Game completed after %v turns. It was a draw.", Turn)
+			log.Printf("[DONE]: Game completed after %v turns. It was a draw.", o.Turn)
 		} else {
-			log.Printf("[DONE]: Game completed after %v turns. %v is the winner.", Turn, winner)
+			log.Printf("[DONE]: Game completed after %v turns. %v is the winner.", o.Turn, winner)
 		}
 	}
+
+	return res
 }
 
-func getRuleset(seed int64, gameTurn int32, snakes []Battlesnake) (rules.Ruleset, rules.RoyaleRuleset) {
+func getRuleset(o *Options, snakes []Battlesnake) (rules.Ruleset, rules.RoyaleRuleset) {
 	var ruleset rules.Ruleset
 	var royale rules.RoyaleRuleset
 
@@ -174,14 +201,14 @@ func getRuleset(seed int64, gameTurn int32, snakes []Battlesnake) (rules.Ruleset
 		MinimumFood:     1,
 	}
 
-	switch GameType {
+	switch o.GameType {
 	case "royale":
 		royale = rules.RoyaleRuleset{
 			StandardRuleset:   standard,
-			Seed:              seed,
-			Turn:              gameTurn,
-			ShrinkEveryNTurns: 10,
-			DamagePerTurn:     1,
+			Seed:              o.Seed,
+			Turn:              o.Turn,
+			ShrinkEveryNTurns: 20,
+			DamagePerTurn:     15,
 		}
 		ruleset = &royale
 	case "squad":
@@ -211,28 +238,28 @@ func getRuleset(seed int64, gameTurn int32, snakes []Battlesnake) (rules.Ruleset
 	return ruleset, royale
 }
 
-func initializeBoardFromArgs(ruleset rules.Ruleset, snakes []Battlesnake) *rules.BoardState {
-	if Timeout == 0 {
-		Timeout = 500
+func initializeBoardFromArgs(o *Options, ruleset rules.Ruleset, snakes []Battlesnake) *rules.BoardState {
+	if o.Timeout == 0 {
+		o.Timeout = 500
 	}
-	HttpClient = http.Client{
-		Timeout: time.Duration(Timeout) * time.Millisecond,
+	o.HttpClient = http.Client{
+		Timeout: time.Duration(o.Timeout) * time.Millisecond,
 	}
 
 	snakeIds := []string{}
 	for _, snake := range snakes {
 		snakeIds = append(snakeIds, snake.ID)
 	}
-	state, err := ruleset.CreateInitialBoardState(Width, Height, snakeIds)
+	state, err := ruleset.CreateInitialBoardState(o.Width, o.Height, snakeIds)
 	if err != nil {
 		log.Panic("[PANIC]: Error Initializing Board State")
 		panic(err)
 	}
 	for _, snake := range snakes {
-		requestBody := getIndividualBoardStateForSnake(state, snake, nil)
+		requestBody := getIndividualBoardStateForSnake(o, state, snake, nil)
 		u, _ := url.ParseRequestURI(snake.URL)
 		u.Path = path.Join(u.Path, "start")
-		_, err = HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
+		_, err = o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 		if err != nil {
 			log.Printf("[WARN]: Request to %v failed", u.String())
 		}
@@ -240,27 +267,27 @@ func initializeBoardFromArgs(ruleset rules.Ruleset, snakes []Battlesnake) *rules
 	return state
 }
 
-func createNextBoardState(ruleset rules.Ruleset, royale rules.RoyaleRuleset, state *rules.BoardState, outOfBounds []rules.Point, snakes []Battlesnake) (*rules.BoardState, []rules.Point) {
+func createNextBoardState(o *Options, ruleset rules.Ruleset, royale rules.RoyaleRuleset, state *rules.BoardState, outOfBounds []rules.Point, snakes []Battlesnake) (*rules.BoardState, []rules.Point) {
 	var moves []rules.SnakeMove
-	if Sequential {
+	if o.Sequential {
 		for _, snake := range snakes {
-			moves = append(moves, getMoveForSnake(state, snake, outOfBounds))
+			moves = append(moves, getMoveForSnake(o, state, snake, outOfBounds))
 		}
 	} else {
 		c := make(chan rules.SnakeMove, len(snakes))
 		for _, snake := range snakes {
-			go getConcurrentMoveForSnake(state, snake, outOfBounds, c)
+			go getConcurrentMoveForSnake(o, state, snake, outOfBounds, c)
 		}
 		for range snakes {
 			moves = append(moves, <-c)
 		}
 	}
 	for _, move := range moves {
-		snake := Battlesnakes[move.ID]
+		snake := o.Battlesnakes[move.ID]
 		snake.LastMove = move.Move
-		Battlesnakes[move.ID] = snake
+		o.Battlesnakes[move.ID] = snake
 	}
-	if GameType == "royale" {
+	if o.GameType == "royale" {
 		_, err := royale.CreateNextBoardState(state, moves)
 		if err != nil {
 			log.Panic("[PANIC]: Error Producing Next Royale Board State")
@@ -275,15 +302,15 @@ func createNextBoardState(ruleset rules.Ruleset, royale rules.RoyaleRuleset, sta
 	return state, royale.OutOfBounds
 }
 
-func getConcurrentMoveForSnake(state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point, c chan rules.SnakeMove) {
-	c <- getMoveForSnake(state, snake, outOfBounds)
+func getConcurrentMoveForSnake(o *Options, state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point, c chan rules.SnakeMove) {
+	c <- getMoveForSnake(o, state, snake, outOfBounds)
 }
 
-func getMoveForSnake(state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point) rules.SnakeMove {
-	requestBody := getIndividualBoardStateForSnake(state, snake, outOfBounds)
+func getMoveForSnake(o *Options, state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point) rules.SnakeMove {
+	requestBody := getIndividualBoardStateForSnake(o, state, snake, outOfBounds)
 	u, _ := url.ParseRequestURI(snake.URL)
 	u.Path = path.Join(u.Path, "move")
-	res, err := HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
+	res, err := o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 	move := snake.LastMove
 	if err != nil {
 		log.Printf("[WARN]: Request to %v failed\n", u.String())
@@ -306,17 +333,17 @@ func getMoveForSnake(state *rules.BoardState, snake Battlesnake, outOfBounds []r
 	return rules.SnakeMove{ID: snake.ID, Move: move}
 }
 
-func sendEndRequest(state *rules.BoardState, snake Battlesnake) {
-	requestBody := getIndividualBoardStateForSnake(state, snake, nil)
+func sendEndRequest(o *Options, state *rules.BoardState, snake Battlesnake) {
+	requestBody := getIndividualBoardStateForSnake(o, state, snake, nil)
 	u, _ := url.ParseRequestURI(snake.URL)
 	u.Path = path.Join(u.Path, "end")
-	_, err := HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
+	_, err := o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		log.Printf("[WARN]: Request to %v failed", u.String())
 	}
 }
 
-func getIndividualBoardStateForSnake(state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point) []byte {
+func getIndividualBoardStateForSnake(o *Options, state *rules.BoardState, snake Battlesnake, outOfBounds []rules.Point) []byte {
 	var youSnake rules.Snake
 	for _, snk := range state.Snakes {
 		if snake.ID == snk.ID {
@@ -325,16 +352,16 @@ func getIndividualBoardStateForSnake(state *rules.BoardState, snake Battlesnake,
 		}
 	}
 	response := ResponsePayload{
-		Game: GameResponse{Id: GameId, Timeout: Timeout},
-		Turn: Turn,
+		Game: GameResponse{Id: o.GameId, Timeout: o.Timeout},
+		Turn: o.Turn,
 		Board: BoardResponse{
 			Height:  state.Height,
 			Width:   state.Width,
 			Food:    coordFromPointArray(state.Food),
 			Hazards: coordFromPointArray(outOfBounds),
-			Snakes:  buildSnakesResponse(state.Snakes),
+			Snakes:  buildSnakesResponse(o, state.Snakes),
 		},
-		You: snakeResponseFromSnake(youSnake),
+		You: snakeResponseFromSnake(o, youSnake),
 	}
 	responseJson, err := json.Marshal(response)
 	if err != nil {
@@ -344,24 +371,24 @@ func getIndividualBoardStateForSnake(state *rules.BoardState, snake Battlesnake,
 	return responseJson
 }
 
-func snakeResponseFromSnake(snake rules.Snake) SnakeResponse {
+func snakeResponseFromSnake(o *Options, snake rules.Snake) SnakeResponse {
 	return SnakeResponse{
 		Id:      snake.ID,
-		Name:    Battlesnakes[snake.ID].Name,
+		Name:    o.Battlesnakes[snake.ID].Name,
 		Health:  snake.Health,
 		Body:    coordFromPointArray(snake.Body),
 		Latency: "0",
 		Head:    coordFromPoint(snake.Body[0]),
 		Length:  int32(len(snake.Body)),
 		Shout:   "",
-		Squad:   Battlesnakes[snake.ID].Squad,
+		Squad:   o.Battlesnakes[snake.ID].Squad,
 	}
 }
 
-func buildSnakesResponse(snakes []rules.Snake) []SnakeResponse {
+func buildSnakesResponse(o *Options, snakes []rules.Snake) []SnakeResponse {
 	var a []SnakeResponse
 	for _, snake := range snakes {
-		a = append(a, snakeResponseFromSnake(snake))
+		a = append(a, snakeResponseFromSnake(o, snake))
 	}
 	return a
 }
@@ -378,13 +405,13 @@ func coordFromPointArray(ptArray []rules.Point) []Coord {
 	return a
 }
 
-func buildSnakesFromOptions() []Battlesnake {
+func buildSnakesFromOptions(o *Options) []Battlesnake {
 	bodyChars := []rune{'■', '⌀', '●', '⍟', '◘', '☺', '□', '☻'}
 	var numSnakes int
 	var snakes []Battlesnake
-	numNames := len(Names)
-	numURLs := len(URLs)
-	numSquads := len(Squads)
+	numNames := len(o.Names)
+	numURLs := len(o.URLs)
+	numSquads := len(o.Squads)
 	if numNames > numURLs {
 		numSnakes = numNames
 	} else {
@@ -401,34 +428,34 @@ func buildSnakesFromOptions() []Battlesnake {
 		id := uuid.New().String()
 
 		if i < numNames {
-			snakeName = Names[i]
+			snakeName = o.Names[i]
 		} else {
-			log.Printf("[WARN]: Name for URL %v is missing: a default name will be applied\n", URLs[i])
+			log.Printf("[WARN]: Name for URL %v is missing: a default name will be applied\n", o.URLs[i])
 			snakeName = id
 		}
 
 		if i < numURLs {
-			u, err := url.ParseRequestURI(URLs[i])
+			u, err := url.ParseRequestURI(o.URLs[i])
 			if err != nil {
-				log.Printf("[WARN]: URL %v is not valid: a default will be applied\n", URLs[i])
+				log.Printf("[WARN]: URL %v is not valid: a default will be applied\n", o.URLs[i])
 				snakeURL = "https://example.com"
 			} else {
 				snakeURL = u.String()
 			}
 		} else {
-			log.Printf("[WARN]: URL for Name %v is missing: a default URL will be applied\n", Names[i])
+			log.Printf("[WARN]: URL for Name %v is missing: a default URL will be applied\n", o.Names[i])
 			snakeURL = "https://example.com"
 		}
 
-		if GameType == "squad" {
+		if o.GameType == "squad" {
 			if i < numSquads {
-				snakeSquad = Squads[i]
+				snakeSquad = o.Squads[i]
 			} else {
-				log.Printf("[WARN]: Squad for URL %v is missing: a default squad will be applied\n", URLs[i])
+				log.Printf("[WARN]: Squad for URL %v is missing: a default squad will be applied\n", o.URLs[i])
 				snakeSquad = strconv.Itoa(i / 2)
 			}
 		}
-		res, err := HttpClient.Get(snakeURL)
+		res, err := o.HttpClient.Get(snakeURL)
 		api := "0"
 		if err != nil {
 			log.Printf("[WARN]: Request to %v failed", snakeURL)
@@ -448,7 +475,7 @@ func buildSnakesFromOptions() []Battlesnake {
 			}
 		}
 		snake := Battlesnake{Name: snakeName, URL: snakeURL, ID: id, API: api, LastMove: "up", Character: bodyChars[i%8]}
-		if GameType == "squad" {
+		if o.GameType == "squad" {
 			snake.Squad = snakeSquad
 		}
 		snakes = append(snakes, snake)
@@ -456,9 +483,9 @@ func buildSnakesFromOptions() []Battlesnake {
 	return snakes
 }
 
-func printMap(state *rules.BoardState, outOfBounds []rules.Point, gameTurn int32) {
-	var o bytes.Buffer
-	o.WriteString(fmt.Sprintf("Ruleset: %s, Seed: %d, Turn: %v\n", GameType, Seed, gameTurn))
+func printMap(o *Options, state *rules.BoardState, outOfBounds []rules.Point) {
+	var b bytes.Buffer
+	b.WriteString(fmt.Sprintf("Ruleset: %s, Seed: %d, Turn: %v\n", o.GameType, o.Seed, o.Turn))
 	board := make([][]rune, state.Width)
 	for i := range board {
 		board[i] = make([]rune, state.Height)
@@ -471,22 +498,22 @@ func printMap(state *rules.BoardState, outOfBounds []rules.Point, gameTurn int32
 	for _, oob := range outOfBounds {
 		board[oob.X][oob.Y] = '░'
 	}
-	o.WriteString(fmt.Sprintf("Hazards ░: %v\n", outOfBounds))
+	b.WriteString(fmt.Sprintf("Hazards ░: %v\n", outOfBounds))
 	for _, f := range state.Food {
 		board[f.X][f.Y] = '⚕'
 	}
-	o.WriteString(fmt.Sprintf("Food ⚕: %v\n", state.Food))
+	b.WriteString(fmt.Sprintf("Food ⚕: %v\n", state.Food))
 	for _, s := range state.Snakes {
 		for _, b := range s.Body {
-			board[b.X][b.Y] = Battlesnakes[s.ID].Character
+			board[b.X][b.Y] = o.Battlesnakes[s.ID].Character
 		}
-		o.WriteString(fmt.Sprintf("%v %c: %v\n", Battlesnakes[s.ID].Name, Battlesnakes[s.ID].Character, s))
+		b.WriteString(fmt.Sprintf("%v %c: %v\n", o.Battlesnakes[s.ID].Name, o.Battlesnakes[s.ID].Character, s))
 	}
 	for y := state.Height - 1; y >= 0; y-- {
 		for x := int32(0); x < state.Width; x++ {
-			o.WriteRune(board[x][y])
+			b.WriteRune(board[x][y])
 		}
-		o.WriteString("\n")
+		b.WriteString("\n")
 	}
-	log.Print(o.String())
+	log.Print(b.String())
 }
