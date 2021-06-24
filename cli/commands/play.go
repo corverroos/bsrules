@@ -505,6 +505,9 @@ func printMap(o *Options, state *rules.BoardState, outOfBounds []rules.Point) {
 	b.WriteString(fmt.Sprintf("Food ⚕: %v\n", state.Food))
 	for _, s := range state.Snakes {
 		for _, b := range s.Body {
+			if b.X < 0 || b.Y < 0 || b.X >= state.Width || b.Y >= state.Height{
+				continue
+			}
 			board[b.X][b.Y] = o.Battlesnakes[s.ID].Character
 		}
 		b.WriteString(fmt.Sprintf("%v %c: %v\n", o.Battlesnakes[s.ID].Name, o.Battlesnakes[s.ID].Character, s))
