@@ -93,6 +93,7 @@ type Options struct {
 	GameType string
 	ViewMap bool
 	Seed int64
+	Log func(string, ...interface{})
 }
 
 type Result struct {
@@ -139,6 +140,9 @@ func Run(o *Options) Result {
 	o.Battlesnakes = make(map[string]Battlesnake)
 	o.GameId = uuid.New().String()
 	o.Turn = 0
+	if o.Log == nil {
+		o.Log = log.Printf
+	}
 
 	snakes := buildSnakesFromOptions(o)
 
@@ -158,7 +162,7 @@ func Run(o *Options) Result {
 		if o.ViewMap {
 			printMap(o, state, outOfBounds)
 		} else {
-			log.Printf("[%v]: State: %v OutOfBounds: %v\n", o.Turn, state, outOfBounds)
+			o.Log("[%v]: State: %v OutOfBounds: %v\n", o.Turn, state, outOfBounds)
 		}
 	}
 
@@ -168,7 +172,7 @@ func Run(o *Options) Result {
 	}
 
 	if o.GameType == "solo" {
-		log.Printf("[DONE]: Game completed after %v turns.", o.Turn)
+		o.Log("[DONE]: Game completed after %v turns.", o.Turn)
 	} else {
 		var winner string
 		isDraw := true
@@ -183,9 +187,9 @@ func Run(o *Options) Result {
 		res.Winner = winner
 
 		if isDraw {
-			log.Printf("[DONE]: Game completed after %v turns. It was a draw.", o.Turn)
+			o.Log("[DONE]: Game completed after %v turns. It was a draw.", o.Turn)
 		} else {
-			log.Printf("[DONE]: Game completed after %v turns. %v is the winner.", o.Turn, winner)
+			o.Log("[DONE]: Game completed after %v turns. %v is the winner.", o.Turn, winner)
 		}
 	}
 
@@ -261,7 +265,7 @@ func initializeBoardFromArgs(o *Options, ruleset rules.Ruleset, snakes []Battles
 		u.Path = path.Join(u.Path, "start")
 		_, err = o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 		if err != nil {
-			log.Printf("[WARN]: Request to %v failed", u.String())
+			o.Log("[WARN]: Request to %v failed", u.String())
 		}
 	}
 	return state
@@ -313,8 +317,8 @@ func getMoveForSnake(o *Options, state *rules.BoardState, snake Battlesnake, out
 	res, err := o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 	move := snake.LastMove
 	if err != nil {
-		log.Printf("[WARN]: Request to %v failed\n", u.String())
-		log.Printf("Body --> %v\n", string(requestBody))
+		o.Log("[WARN]: Request to %v failed\n", u.String())
+		o.Log("Body --> %v\n", string(requestBody))
 	} else if res.Body != nil {
 		defer res.Body.Close()
 		body, readErr := ioutil.ReadAll(res.Body)
@@ -339,7 +343,7 @@ func sendEndRequest(o *Options, state *rules.BoardState, snake Battlesnake) {
 	u.Path = path.Join(u.Path, "end")
 	_, err := o.HttpClient.Post(u.String(), "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		log.Printf("[WARN]: Request to %v failed", u.String())
+		o.Log("[WARN]: Request to %v failed", u.String())
 	}
 }
 
@@ -418,7 +422,7 @@ func buildSnakesFromOptions(o *Options) []Battlesnake {
 		numSnakes = numURLs
 	}
 	if numNames != numURLs {
-		log.Println("[WARN]: Number of Names and URLs do not match: defaults will be applied to missing values")
+		o.Log("[WARN]: Number of Names and URLs do not match: defaults will be applied to missing values")
 	}
 	for i := int(0); i < numSnakes; i++ {
 		var snakeName string
@@ -430,20 +434,20 @@ func buildSnakesFromOptions(o *Options) []Battlesnake {
 		if i < numNames {
 			snakeName = o.Names[i]
 		} else {
-			log.Printf("[WARN]: Name for URL %v is missing: a default name will be applied\n", o.URLs[i])
+			o.Log("[WARN]: Name for URL %v is missing: a default name will be applied\n", o.URLs[i])
 			snakeName = id
 		}
 
 		if i < numURLs {
 			u, err := url.ParseRequestURI(o.URLs[i])
 			if err != nil {
-				log.Printf("[WARN]: URL %v is not valid: a default will be applied\n", o.URLs[i])
+				o.Log("[WARN]: URL %v is not valid: a default will be applied\n", o.URLs[i])
 				snakeURL = "https://example.com"
 			} else {
 				snakeURL = u.String()
 			}
 		} else {
-			log.Printf("[WARN]: URL for Name %v is missing: a default URL will be applied\n", o.Names[i])
+			o.Log("[WARN]: URL for Name %v is missing: a default URL will be applied\n", o.Names[i])
 			snakeURL = "https://example.com"
 		}
 
@@ -451,14 +455,14 @@ func buildSnakesFromOptions(o *Options) []Battlesnake {
 			if i < numSquads {
 				snakeSquad = o.Squads[i]
 			} else {
-				log.Printf("[WARN]: Squad for URL %v is missing: a default squad will be applied\n", o.URLs[i])
+				o.Log("[WARN]: Squad for URL %v is missing: a default squad will be applied\n", o.URLs[i])
 				snakeSquad = strconv.Itoa(i / 2)
 			}
 		}
 		res, err := o.HttpClient.Get(snakeURL)
 		api := "0"
 		if err != nil {
-			log.Printf("[WARN]: Request to %v failed", snakeURL)
+			o.Log("[WARN]: Request to %v failed", snakeURL)
 		} else if res.Body != nil {
 			defer res.Body.Close()
 			body, readErr := ioutil.ReadAll(res.Body)
