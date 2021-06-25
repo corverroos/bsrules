@@ -32,6 +32,14 @@ type Coord struct {
 	Y int32 `json:"y"`
 }
 
+type InfoResponse struct {
+Author     string `json:"author"`
+Color      string `json:"color"`
+Head       string `json:"head"`
+Tail       string `json:"tail"`
+Meta interface{} `json:"meta"`
+}
+
 type SnakeResponse struct {
 	Id      string  `json:"id"`
 	Name    string  `json:"name"`
@@ -100,6 +108,7 @@ type Result struct {
 	Turn int32
 	Winner string
 	Board *rules.BoardState
+	Infos map[string]InfoResponse
 }
 
 var playCmd = &cobra.Command{
@@ -130,7 +139,8 @@ func init() {
 
 var makeRun = func(o *Options) func(cmd *cobra.Command, args []string) {
 	return func(cmd *cobra.Command, args []string) {
-		Run(o)
+		res := Run(o)
+		o.Log("%#v", res)
 	}
 }
 
@@ -149,7 +159,11 @@ func Run(o *Options) Result {
 	var ruleset rules.Ruleset
 	var royale rules.RoyaleRuleset
 	var outOfBounds []rules.Point
+
 	ruleset, _ = getRuleset(o, snakes)
+
+	infos := getSnakeInfos(o, snakes)
+
 	state := initializeBoardFromArgs(o, ruleset, snakes)
 	for _, snake := range snakes {
 		o.Battlesnakes[snake.ID] = snake
@@ -169,6 +183,7 @@ func Run(o *Options) Result {
 	res := Result{
 		Board: state,
 		Turn: o.Turn,
+		Infos: infos,
 	}
 
 	if o.GameType == "solo" {
@@ -240,6 +255,26 @@ func getRuleset(o *Options, snakes []Battlesnake) (rules.Ruleset, rules.RoyaleRu
 		ruleset = &standard
 	}
 	return ruleset, royale
+}
+
+func getSnakeInfos(o *Options, snakes []Battlesnake) map[string]InfoResponse {
+	res := make(map[string]InfoResponse)
+	for _, snake := range snakes {
+		u, _ := url.ParseRequestURI(snake.URL)
+		resp, err := o.HttpClient.Get(u.String())
+		if err != nil {
+			o.Log("[WARN]: Request to %v failed", u.String())
+			continue
+		}
+		var info InfoResponse
+
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			o.Log("[WARN]: Decode info resp failed: %v", err)
+		}
+		res[snake.Name] = info
+	}
+
+	return res
 }
 
 func initializeBoardFromArgs(o *Options, ruleset rules.Ruleset, snakes []Battlesnake) *rules.BoardState {
